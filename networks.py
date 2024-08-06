@@ -71,3 +71,14 @@ class Q_Network(eqx.Module):
         for layer in self.layers[:-1]:
             x = jax.nn.tanh(layer(x))
         return self.layers[-1](x)
+    
+class Alpha(eqx.Module):
+    alpha: jnp.ndarray
+    num_actions: int = eqx.field(static=True)
+
+    def __init__(self, alpha_init: float = 0.0, num_actions: int = 1):
+        self.alpha = jnp.array(alpha_init)
+        self.num_actions = num_actions
+
+    def __call__(self) -> jnp.ndarray:
+        return jnp.exp(self.alpha)
