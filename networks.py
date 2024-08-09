@@ -81,4 +81,5 @@ class Alpha(eqx.Module):
         self.num_actions = num_actions
 
     def __call__(self) -> jnp.ndarray:
-        return jnp.exp(self.alpha)
+        # return jnp.exp(self.alpha)
+        return self.alpha

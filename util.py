@@ -29,18 +29,19 @@ def log_callback(info):
         print(f"global step={timesteps[t]}, episodic return={return_values[t]}")
 
 
-def set_up_replay_buffer(hyperparams, env, env_params = None):
+def set_up_replay_buffer(hyperparams, env):
     dummy_key = jax.random.PRNGKey(0)
-    if env_params is None:
-        env_params = env.default_params()
-    _, dummy_env_state = env.reset(dummy_key, env_params)
-    action_dummy = env.action_space(env_params).sample(dummy_key)
-    obs_dummy, _, reward_dummy, done_dummy, info_dummy = env.step(dummy_key, dummy_env_state, action_dummy, env_params)
+    _, dummy_env_state = env.reset(dummy_key)
+    try:
+        action_dummy = env.action_space().sample(dummy_key)
+    except TypeError:
+        action_dummy = env.action_space.sample(dummy_key)
+    (obs_dummy, reward_dummy, terminated_dummy, truncated_dummy, info_dummy), env_state = env.step(dummy_key, dummy_env_state, action_dummy)
     dummy_transition = TrainBatch(
         observation=obs_dummy,
         action=action_dummy,
         reward=reward_dummy,
-        done=done_dummy,
+        done=terminated_dummy,
         log_prob=jnp.zeros_like(action_dummy, dtype=jnp.float32),
         value=jnp.zeros_like(reward_dummy, dtype=jnp.float32),
         info=info_dummy,
@@ -49,12 +50,18 @@ def set_up_replay_buffer(hyperparams, env, env_params = None):
         returns=jnp.zeros_like(reward_dummy, dtype=jnp.float32),
         targets=jnp.zeros_like(reward_dummy, dtype=jnp.float32),
     )
+    # if not hyperparams.off_policy:
+    max_length = hyperparams.num_envs * hyperparams.num_steps
+    sample_batch_size = hyperparams.num_envs * hyperparams.num_steps
+    # else:
+    #     max_length = hyperparams.buffer_max_size
+    #     sample_batch_size = hyperparams.buffer_sample_size
     buffer = flashbax.make_flat_buffer(
-        max_length=hyperparams.num_envs * hyperparams.num_steps * 2,
-        min_length=0,
-        sample_batch_size=hyperparams.buffer_sample_size,
-        add_sequences=False,
-        add_batch_size=hyperparams.num_envs * hyperparams.num_steps,
+        max_length=max_length,
+        min_length=hyperparams.num_steps,
+        sample_batch_size=sample_batch_size,
+        add_sequences=True,
+        add_batch_size=hyperparams.num_envs,
     )
     buffer_state = buffer.init(dummy_transition)
 

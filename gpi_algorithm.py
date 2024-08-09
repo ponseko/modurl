@@ -9,13 +9,12 @@ from typing import Tuple
 import chex
 import gymnax
 from gymnax.environments.environment import Environment
-from functools import partial
-from env_wrappers import LogWrapper
-import flashbax
+from env_wrappers import LogWrapper, GymnaxWrapper, NavixWrapper
 from flashbax.buffers.trajectory_buffer import TrajectoryBufferState as BufferState, TrajectoryBuffer as Buffer
 from gpi_modules import *
 from util import log_callback, set_up_replay_buffer, set_up_optimizer, Transition, TrainBatch
 from networks import ActorNetwork, ValueNetwork, Q_Network, Alpha
+import navix
 
 @chex.dataclass(frozen=True)
 class TrainState:
@@ -44,13 +43,13 @@ class GPI_hyperparams:
     num_envs: int = 6
     backend: str = "cpu" # "cpu" or "gpu"
     debug: bool = True # log values during training
-    alpha_init: float = 0.2 # entropy coefficient
-    learn_alpha: bool = True 
+    alpha_init: float = 0.01 # entropy coefficient
+    learn_alpha: bool = False 
     kl_coef: float = 0.2
+    max_grad_norm: float = 100.0
 
     # PPO
     gae_lambda: float = 0.95
-    max_grad_norm: float = 100.0
     clip_coef: float = 0.2
     clip_coef_vf: float = 10.0 # Depends on the reward scaling !
     vf_coef: float = 0.25
@@ -67,11 +66,11 @@ class GPI_hyperparams:
 
     # Configuration options
     policy_regularizer: str = ("ppo", "add_entropy") # "sac", "a2c", "ppo", "kl", "add_entropy"
-    dual_critics: bool = True
-    use_Q_critic: bool = True # if false: use value network, else Q network
-    use_gae: bool = True
-    use_target_networks: bool = True
-    off_policy: bool = True
+    dual_critics: bool = False
+    use_Q_critic: bool = False # if false: use value network, else Q network
+    use_gae: bool = True # else n-step returns
+    use_target_networks: bool = False
+    off_policy: bool = False # else -> sample_batch_size = num_steps (* num_envs)
     normalize_advantages: bool = True
 
 class GpiAlgorithm(eqx.Module):
@@ -88,9 +87,13 @@ class GpiAlgorithm(eqx.Module):
         hyperparams: GPI_hyperparams = GPI_hyperparams(),
     ):
         self.hyperparams = hyperparams
-        env_params = env.default_params
-        observation_space = env.observation_space(env_params)
-        action_space = env.action_space(env_params)
+        try: # gymnax support, as it does not use the default_params property
+            env_params = env.default_params
+            observation_space = env.observation_space(env_params)
+            action_space = env.action_space(env_params)
+        except AttributeError:
+            observation_space = env.observation_space
+            action_space = env.action_space
         num_actions = action_space.n
 
         actor_key, critic_key, dual_critic_key = jax.random.split(key, 3)
@@ -116,7 +119,7 @@ class GpiAlgorithm(eqx.Module):
         else: critic_target = None
 
         self.optimizer, actor_optimizer_state, critic_optimizer_state, alpha_optimizer_state = set_up_optimizer(hyperparams, actor, critic, alpha)
-        self.buffer, buffer_state = set_up_replay_buffer(hyperparams, env, env_params)
+        self.buffer, buffer_state = set_up_replay_buffer(hyperparams, env)
         
         self.train_state_checkpoint = TrainState(
             actor=actor,
@@ -130,7 +133,7 @@ class GpiAlgorithm(eqx.Module):
         )
 
     def __call__(self, key: chex.PRNGKey, observation):
-        action_dist = jax.vmap(self.train_state_checkpoint.actor)(observation)
+        action_dist = self.train_state_checkpoint.actor(observation)
         action = action_dist.sample(seed=key)
         return action
     
@@ -160,7 +163,6 @@ class GpiAlgorithm(eqx.Module):
                 agent = GPIAlgorithm(rng, env)
                 agent = GPIAlgorithm.train(rng, agent, env)
         """
-
         def get_critic_output(critics: Tuple, observation):
             """ 
                 Get value from critic network, either a single critic or the minimum of two critics 
@@ -173,7 +175,6 @@ class GpiAlgorithm(eqx.Module):
             else: # dualing critic
                 return jnp.minimum(jax.vmap(critics[0])(observation), jax.vmap(critics[1])(observation))
             
-
         def sample_data(runner_state, _) -> Tuple[Tuple, Transition]:
             train_state, env_state, last_obs, rng = runner_state
             rng, sample_key, step_key = jax.random.split(rng, 3)
@@ -187,9 +188,9 @@ class GpiAlgorithm(eqx.Module):
             # take a step in the environment
             rng, key = jax.random.split(rng)
             step_key = jax.random.split(key, hyperparams.num_envs)
-            obsv, env_state, reward, done, info = jax.vmap(
-                env.step, in_axes=(0, 0, 0, None)
-            )(step_key, env_state, action, env_params)
+            (obsv, reward, done, truncated, info), env_state = jax.vmap(
+                env.step, in_axes=(0, 0, 0)
+            )(step_key, env_state, action)
             
             transition = Transition(
                 observation=last_obs,
@@ -215,6 +216,8 @@ class GpiAlgorithm(eqx.Module):
                 flat_targets = (next_action_probs * (q_targets - train_state.alpha() * next_action_probs_log)).sum(axis=-1)
                 flat_targets = trajectory_batch_flat.reward + ~trajectory_batch_flat.done * hyperparams.gamma * flat_targets
                 targets = flat_targets.reshape(trajectory_batch.reward.shape)
+            else: 
+                targets = np.zeros(trajectory_batch.reward.shape)
 
             last_value = get_critic_output(train_state.critic, last_obs)
             if hyperparams.use_Q_critic:
@@ -229,10 +232,33 @@ class GpiAlgorithm(eqx.Module):
                 **trajectory_batch,
                 advantages=advantages,
                 returns=returns,
-                targets=targets
+                targets=targets 
             )
-            train_batch = jax.tree.map( # flatten over the envs
-                lambda x: x.reshape((-1,) + x.shape[2:]), train_batch
+
+
+            # ####### WHITHOUT FLASHBAX
+            # rng, shuffle_key, sample_key = jax.random.split(rng, 3)
+            # batch_idx = jax.random.permutation(shuffle_key, batch_size)
+
+            # # reshape (flatten over first dimension)
+            # batch = jax.tree_util.tree_map(
+            #     lambda x: x.reshape((batch_size,) + x.shape[2:]), train_batch
+            # )
+            # # take from the batch in a new order (the order of the randomized batch_idx)
+            # shuffled_batch = jax.tree_util.tree_map(
+            #     lambda x: jnp.take(x, batch_idx, axis=0), batch
+            # )
+            # # split in minibatches
+            # minibatches = jax.tree_util.tree_map(
+            #     lambda x: x.reshape((hyperparams.num_minibatches, -1) + x.shape[1:]), shuffled_batch
+            # )
+            # train_batch = jax.tree_util.tree_map(
+            #     lambda x: x.repeat(hyperparams.update_epochs, axis=0), minibatches
+            # )
+            # ####### END WHITHOUT FLASHBAX
+            
+            train_batch = jax.tree.map( # align with flashbax: (envs, time_length, ...)
+                lambda x: x.swapaxes(0,1), train_batch
             )
             buffer_state = jax.jit(agent.buffer.add, donate_argnums=(0,))(train_state.buffer_state, train_batch)
             train_state = eqx.tree_at(lambda x: x.buffer_state, train_state, buffer_state)
@@ -310,7 +336,7 @@ class GpiAlgorithm(eqx.Module):
 
             return update_state, 0.0 # TODO: return loss info
 
-        @partial(jax.jit, donate_argnums=(0,))
+        @eqx.filter_jit(donate="warn")
         def train_step(runner_state, _):
             
             # sample
@@ -341,7 +367,6 @@ class GpiAlgorithm(eqx.Module):
             hyperparams = hyperparams or GPI_hyperparams()
             agent = GpiAlgorithm(rng, env, hyperparams)
 
-        env_params = env.default_params
         hyperparams = agent.hyperparams
         batch_size = int(hyperparams.num_envs * hyperparams.num_steps)
         num_iterations = int(hyperparams.total_timesteps // batch_size)
@@ -350,7 +375,7 @@ class GpiAlgorithm(eqx.Module):
         # reset the environment
         rng, reset_key = jax.random.split(rng)
         reset_key = jax.random.split(reset_key, hyperparams.num_envs)
-        obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_key, env_params)
+        obsv, env_state = jax.vmap(env.reset, in_axes=(0))(reset_key)
 
         runner_state = (latest_or_new_train_state, env_state, obsv, rng)
         runner_state, metrics = jax.lax.scan(
@@ -360,9 +385,23 @@ class GpiAlgorithm(eqx.Module):
         return agent, metrics
 
 
+# import traceback
+# import warnings
+# import sys
+
+# def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
+
+#     log = file if hasattr(file,'write') else sys.stderr
+#     traceback.print_stack(file=log)
+#     log.write(warnings.formatwarning(message, category, filename, lineno, line))
+
+# warnings.showwarning = warn_with_traceback
+
 if __name__ == "__main__":
     env, env_params = gymnax.make("CartPole-v1")
-    # env = navix.make('MiniGrid-Empty-8x8-v0')
+    env = GymnaxWrapper(env)
+    # env = navix.make('Navix-DoorKey-5x5-v0')
+    # env = NavixWrapper(env)
     env = LogWrapper(env)
     key = jax.random.PRNGKey(0)
     agent = GpiAlgorithm(key, env)
