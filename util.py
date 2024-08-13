@@ -3,6 +3,7 @@ import optax
 import flashbax
 import jax.numpy as jnp
 import chex
+import wandb
 
 @chex.dataclass(frozen=True)
 class Transition:
@@ -28,6 +29,18 @@ def log_callback(info):
     for t in range(len(timesteps)): 
         print(f"global step={timesteps[t]}, episodic return={return_values[t]}")
 
+def wandb_callback(info):
+    if wandb.run:
+        num_envs = info["num_envs"]
+        return_values = info["returned_episode_returns"][info["returned_episode"]]
+        timesteps = info["timestep"][info["returned_episode"]] * num_envs
+        global_timestep = timesteps[0]
+        average_return = return_values.mean()
+        wandb.log({
+            f"global step": global_timestep,
+            f"average episodic return": average_return
+        })
+
 
 def set_up_replay_buffer(hyperparams, env):
     dummy_key = jax.random.PRNGKey(0)
@@ -50,12 +63,12 @@ def set_up_replay_buffer(hyperparams, env):
         returns=jnp.zeros_like(reward_dummy, dtype=jnp.float32),
         targets=jnp.zeros_like(reward_dummy, dtype=jnp.float32),
     )
-    # if not hyperparams.off_policy:
-    max_length = hyperparams.num_envs * hyperparams.num_steps
-    sample_batch_size = hyperparams.num_envs * hyperparams.num_steps
-    # else:
-    #     max_length = hyperparams.buffer_max_size
-    #     sample_batch_size = hyperparams.buffer_sample_size
+    if not hyperparams.off_policy:
+        max_length = hyperparams.num_envs * hyperparams.num_steps
+        sample_batch_size = hyperparams.num_envs * hyperparams.num_steps
+    else:
+        max_length = hyperparams.buffer_max_size
+        sample_batch_size = hyperparams.buffer_sample_size
     buffer = flashbax.make_flat_buffer(
         max_length=max_length,
         min_length=hyperparams.num_steps,
