@@ -3,6 +3,18 @@ import equinox as eqx
 from typing import List
 import distrax
 import jax.numpy as jnp
+import numpy as np
+
+class LinearOrthInit(eqx.nn.Linear):
+    """ eqx.nn.Linear with orthogonal initialization """
+    def __init__(self, orth_scale, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        weight_shape = self.weight.shape
+        orth_init = jax.nn.initializers.orthogonal(orth_scale)
+        self.weight = orth_init(kwargs["key"], weight_shape)
+        if self.bias is not None:
+            self.bias = jnp.zeros(self.bias.shape)
+
 
 class ActorNetwork(eqx.Module):
     """Actor network"""
@@ -12,12 +24,12 @@ class ActorNetwork(eqx.Module):
     def __init__(self, key, in_shape, hidden_features: List[int], num_actions):
         keys = jax.random.split(key, len(hidden_features))
         self.layers = [
-            eqx.nn.Linear(in_shape, hidden_features[0], key=keys[0])
+            LinearOrthInit(np.sqrt(2), in_shape, hidden_features[0], key=keys[0])
         ] + [
-            eqx.nn.Linear(hidden_features[i], hidden_features[i+1], key=keys[i+1])
+            LinearOrthInit(np.sqrt(2), hidden_features[i], hidden_features[i+1], key=keys[i+1])
             for i in range(len(hidden_features)-1)
         ] + [
-            eqx.nn.Linear(hidden_features[-1], num_actions, key=keys[-1])
+            LinearOrthInit(0.01, hidden_features[-1], num_actions, key=keys[-1])
         ]
 
     def __call__(self, x):
@@ -35,12 +47,12 @@ class ValueNetwork(eqx.Module):
     def __init__(self, key, in_shape, hidden_layers: List[int], **kwargs):
         keys = jax.random.split(key, len(hidden_layers))
         self.layers = [
-            eqx.nn.Linear(in_shape, hidden_layers[0], key=keys[0])
+            LinearOrthInit(np.sqrt(2), in_shape, hidden_layers[0], key=keys[0])
         ] + [
-            eqx.nn.Linear(hidden_layers[i], hidden_layers[i+1], key=keys[i+1])
+            LinearOrthInit(np.sqrt(2), hidden_layers[i], hidden_layers[i+1], key=keys[i+1])
             for i in range(len(hidden_layers)-1)
         ] + [
-            eqx.nn.Linear(hidden_layers[-1], 1, key=keys[-1])
+            LinearOrthInit(0.01, hidden_layers[-1], 1, key=keys[-1])
         ]
 
     def __call__(self, x):
@@ -59,12 +71,12 @@ class Q_Network(eqx.Module):
     def __init__(self, key, in_shape, hidden_layers: List[int], num_actions):
         keys = jax.random.split(key, len(hidden_layers))
         self.layers = [
-            eqx.nn.Linear(in_shape, hidden_layers[0], key=keys[0])
+            LinearOrthInit(np.sqrt(2), in_shape, hidden_layers[0], key=keys[0])
         ] + [
-            eqx.nn.Linear(hidden_layers[i], hidden_layers[i+1], key=keys[i+1])
+            LinearOrthInit(np.sqrt(2), hidden_layers[i], hidden_layers[i+1], key=keys[i+1])
             for i in range(len(hidden_layers)-1)
         ] + [
-            eqx.nn.Linear(hidden_layers[-1], num_actions, key=keys[-1])
+            LinearOrthInit(0.01, hidden_layers[-1], num_actions, key=keys[-1])
         ]
 
     def __call__(self, x):

@@ -30,16 +30,26 @@ def log_callback(info):
         print(f"global step={timesteps[t]}, episodic return={return_values[t]}")
 
 def wandb_callback(info):
-    if wandb.run:
-        num_envs = info["num_envs"]
-        return_values = info["returned_episode_returns"][info["returned_episode"]]
-        timesteps = info["timestep"][info["returned_episode"]] * num_envs
-        global_timestep = timesteps[0]
-        average_return = return_values.mean()
-        wandb.log({
-            f"global step": global_timestep,
-            f"average episodic return": average_return
-        })
+    if wandb.run is None:
+        raise wandb.Error(
+            """
+                wandb logging is enabled, but wandb.run is not defined.
+                Please initialize wandb before using this callback.
+            """
+        )
+    num_envs = info["num_envs"]
+    return_values = info["returned_episode_returns"][info["returned_episode"]]
+    if len(return_values) == 0:
+        return # no episodes finished
+    timesteps = info["timestep"][info["returned_episode"]] * num_envs
+    global_timestep = timesteps[0]
+    average_return = return_values.mean()
+    wandb.log({
+        f"global_step": global_timestep,
+        f"average episodic return": average_return,
+        f"rollout/ep_rew_mean": average_return, # SB3 compatibility
+    })
+        
 
 
 def set_up_replay_buffer(hyperparams, env):
@@ -71,7 +81,7 @@ def set_up_replay_buffer(hyperparams, env):
         sample_batch_size = hyperparams.buffer_sample_size
     buffer = flashbax.make_flat_buffer(
         max_length=max_length,
-        min_length=hyperparams.num_steps,
+        min_length=hyperparams.num_steps - 1,
         sample_batch_size=sample_batch_size,
         add_sequences=True,
         add_batch_size=hyperparams.num_envs,

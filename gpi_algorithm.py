@@ -16,29 +16,30 @@ from util import log_callback, wandb_callback, set_up_replay_buffer, set_up_opti
 from networks import ActorNetwork, ValueNetwork, Q_Network, Alpha
 import navix
 import wandb
+from default_params import DEFAULT_A2C_PARAMS, DEFAULT_PPO_PARAMS
 
 @chex.dataclass(frozen=True)
 class TrainState:
     actor: ActorNetwork
     actor_optimizer_state: optax.OptState
-    buffer_state: BufferState # NOTE: Maybe also optional (None?)
+    buffer_state: BufferState
     alpha: Alpha
     alpha_optimizer_state: optax.OptState
 
-    critic: tuple[eqx.Module] | tuple[eqx.Module, eqx.Module]
-    critic_optimizer_state: tuple[optax.OptState] | tuple[optax.OptState, optax.OptState]
+    critic: Tuple[eqx.Module] | Tuple[eqx.Module, eqx.Module]
+    critic_optimizer_state: Tuple[optax.OptState] | Tuple[optax.OptState, optax.OptState]
 
-    critic_target: tuple[eqx.Module] | tuple[eqx.Module, eqx.Module] | None = None
+    critic_target: Tuple[eqx.Module] | Tuple[eqx.Module, eqx.Module] | None = None
 
 @chex.dataclass(frozen=True)
-class GPI_hyperparams:
+class GpiHyperparams:
     """
     Hyperparameters for the any algorithm
     There will be some reduncy in this class, but it will be easier to manage
     """
     # General
     wandb: bool = True
-    total_timesteps: int = 1e6
+    total_timesteps: int = 5e5
     learning_rate: float = 1e-3
     anneal_lr: bool = True
     gamma: float = 0.99
@@ -63,23 +64,24 @@ class GPI_hyperparams:
     # minibatch_size: int = 0 # mini-batch size (batch_size / num_minibatches)
     # num_iterations: int = 0 # number of iterations (total_timesteps / num_steps / num_envs)
 
-    # Buffer
+    # Buffer: Only used when off_policy=True
     buffer_max_size: int = 1000
     buffer_sample_size: int = 128 * 6
 
     # Configuration options
-    policy_regularizer: str = ("ppo", "add_entropy") # "sac", "a2c", "ppo", "kl", "add_entropy"
     dual_critics: bool = True
     use_Q_critic: bool = False # if false: use value network, else Q network
-    use_gae: bool = True # else n-step returns
     use_target_networks: bool = True
     off_policy: bool = False # else -> sample_batch_size = num_steps (* num_envs)
     normalize_advantages: bool = True
+    policy_regularizer: Tuple[str] = ("ppo", "add_entropy") # "ppo", "a2c", "sac", "kl", "add_entropy"
+    
+    
 
 class GpiAlgorithm(eqx.Module):
 
     train_state_checkpoint: TrainState
-    hyperparams: GPI_hyperparams = eqx.field(static=True)
+    hyperparams: GpiHyperparams = GpiHyperparams() # = eqx.field(static=True)
     optimizer: optax.GradientTransformation = eqx.field(static=True)
     buffer: Buffer = eqx.field(static=True)
 
@@ -87,10 +89,11 @@ class GpiAlgorithm(eqx.Module):
         self,
         key: chex.PRNGKey,
         env: gymnax.environments.environment.Environment, # env is a gym environment in jax style TODO
-        hyperparams: GPI_hyperparams = GPI_hyperparams(),
+        hyperparams: GpiHyperparams = GpiHyperparams(),
     ):
         self.hyperparams = hyperparams
-        try: # gymnax support, as it does not use the default_params property
+
+        try: # gymnax support
             env_params = env.default_params
             observation_space = env.observation_space(env_params)
             action_space = env.action_space(env_params)
@@ -107,7 +110,6 @@ class GpiAlgorithm(eqx.Module):
         else: CriticNetwork = ValueNetwork
 
         alpha = Alpha(hyperparams.alpha_init, num_actions)
-
 
         if hyperparams.dual_critics:
             critic = (
@@ -144,11 +146,11 @@ class GpiAlgorithm(eqx.Module):
         eqx.tree_serialise_leaves(path, self)
 
     def load(self, path: str) -> GpiAlgorithm:
-        return eqx.tree_deserialise_leaves(path)
+        return eqx.tree_deserialise_leaves(path, self)
     
 
     @classmethod
-    def train(cls, rng: chex.PRNGKey, env: Environment, *, agent: Optional[GpiAlgorithm] = None, hyperparams: Optional[GPI_hyperparams] = None):
+    def train(cls, rng: chex.PRNGKey, env: Environment, *, agent: Optional[GpiAlgorithm] = None, hyperparams: Optional[GpiHyperparams] = None):
         """
             This method trains an agent instance and returns the trained agent.
             The number of training steps are determined by the provided hyperparameters.
@@ -226,10 +228,7 @@ class GpiAlgorithm(eqx.Module):
             if hyperparams.use_Q_critic:
                 action_dist = jax.vmap(train_state.actor)(last_obs)
                 last_value = (last_value * action_dist.probs).sum(axis=-1)
-            if hyperparams.use_gae: # use GAE
-                advantages, returns = calculate_gae_returns(trajectory_batch, last_value, hyperparams)
-            else:
-                advantages, returns = calculate_n_step_returns(trajectory_batch, last_value, hyperparams)
+            advantages, returns = calculate_gae_returns(trajectory_batch, last_value, hyperparams)
             
             train_batch = TrainBatch(
                 **trajectory_batch,
@@ -350,7 +349,7 @@ class GpiAlgorithm(eqx.Module):
             return runner_state, metric
 
         if agent is None:
-            hyperparams = hyperparams or GPI_hyperparams()
+            hyperparams = hyperparams or GpiHyperparams()
             agent = GpiAlgorithm(rng, env, hyperparams)
 
         hyperparams = agent.hyperparams
@@ -362,12 +361,6 @@ class GpiAlgorithm(eqx.Module):
         rng, reset_key = jax.random.split(rng)
         reset_key = jax.random.split(reset_key, hyperparams.num_envs)
         obsv, env_state = jax.vmap(env.reset, in_axes=(0))(reset_key)
-
-        if hyperparams.wandb:
-            wandb.init(
-                project="gpi",
-                config=hyperparams.__dict__
-            )
 
         runner_state = (latest_or_new_train_state, env_state, obsv, rng)
         runner_state, metrics = jax.lax.scan(
@@ -395,12 +388,17 @@ if __name__ == "__main__":
     # env = navix.make('Navix-DoorKey-5x5-v0')
     # env = NavixWrapper(env)
     env = LogWrapper(env)
-    key = jax.random.PRNGKey(0)
-    agent = GpiAlgorithm(key, env)
-    agent, metrics = GpiAlgorithm.train(key, env)
+    key = jax.random.PRNGKey(2242)
+
+    a2c_agent_params = GpiHyperparams(DEFAULT_A2C_PARAMS)
+    agent = GpiAlgorithm(key, env, a2c_agent_params)
+    if agent.hyperparams.wandb:
+        wandb.init(
+            project="sb3",
+            config=agent.hyperparams.__dict__
+        )
+    agent, metrics = GpiAlgorithm.train(key, env, agent=agent)
 
     # multiple training runs
     # keys = jax.random.split(key, 3)
     # agents, metrics = jax.vmap(GpiAlgorithm.train, in_axes=(0, None))(keys, env)
-    
-    breakpoint()
