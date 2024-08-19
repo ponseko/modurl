@@ -10,7 +10,7 @@ from gpi_algorithm import GpiAlgorithm, GpiHyperparams
 from env_wrappers import GymnaxWrapper, LogWrapper
 from default_params import DEFAULT_A2C_PARAMS, DEFAULT_PPO_PARAMS
 
-
+env_id = "CartPole-v1"
 
 seeds = np.arange(10).tolist()
 for seed in seeds:
@@ -18,7 +18,7 @@ for seed in seeds:
     config = {
         "policy_type": "MlpPolicy",
         "total_timesteps": 500_000,
-        "env_id": "CartPole-v1",
+        "env_id": env_id,
     }
     wandb_run = wandb.init(project="sb3_sanity_check", config=config, sync_tensorboard=True)
     env = make_vec_env(config["env_id"], n_envs=8, seed=seed)
@@ -43,7 +43,7 @@ for seed in seeds:
 
 
     # GPI
-    env, env_params = gymnax.make("CartPole-v1")
+    env, env_params = gymnax.make(env_id)
     env = GymnaxWrapper(env)
     env = LogWrapper(env)
     key = jax.random.PRNGKey(seed)
@@ -62,7 +62,7 @@ for seed in seeds:
     config = {
         "policy_type": "MlpPolicy",
         "total_timesteps": 500_000,
-        "env_id": "CartPole-v1",
+        "env_id": env_id,
     }
     wandb_run = wandb.init(project="sb3_sanity_check", config=config, sync_tensorboard=True)
     env = make_vec_env(config["env_id"], n_envs=8, seed=seed)
@@ -87,7 +87,7 @@ for seed in seeds:
 
 
     # GPI
-    env, env_params = gymnax.make("CartPole-v1")
+    env, env_params = gymnax.make(env_id)
     env = GymnaxWrapper(env)
     env = LogWrapper(env)
     key = jax.random.PRNGKey(seed)
