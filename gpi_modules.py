@@ -107,7 +107,7 @@ def policy_loss(params, hyperparams, train_data: TrainBatch, critic_output, old_
     # [kl, add_entropy] # TODO: 
 
     # TODO other kl directions
-    old_action_dist = jax.vmap(old_policy)(train_data.observation)
+    old_action_dist = get_action_dist(train_data.observation, actor=old_policy)
     kl_div = jnp.mean(old_action_dist.kl_divergence(action_dist))
     actor_loss += hyperparams.kl_coef * kl_div
 

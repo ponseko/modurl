@@ -135,7 +135,7 @@ for env_id in env_ids:
     #     log_multiple_runs(metrics, config)
 
     for algo_name, params in zip(["A2C_gpi", "PPO_gpi", "SAC_gpi", "DQN_gpi"], [a2c_default, ppo_default, sac_default, dqn_default]):
-        algo_name += "_default"
+        algo_name += "_naive"
         project_name = "default-vs-engineered"
         params = GpiHyperparams(params)
         agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
