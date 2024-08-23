@@ -104,7 +104,6 @@ dqn_default.update({
 })
 
 env_ids = ["CartPole-v1", "Acrobot-v1", "Catch-bsuite", "MountainCar-v0"]
-env_ids = ["Catch-bsuite"]
 seed_num = 10
 num_timesteps = 1_000_000
 for env_id in env_ids:
