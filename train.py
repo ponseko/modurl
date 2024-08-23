@@ -24,12 +24,12 @@ def log_multiple_runs(metrics, config):
             project=project_name, 
             config=config
         )
-        rewards_start = rewards[:len(rewards) % 5]
-        timesteps_start = timesteps[:len(rewards) % 5]
-        rewards = rewards[len(rewards) % 5:].reshape(-1, 5).mean(axis=1)
-        timesteps = timesteps[len(timesteps) % 5:].reshape(-1, 5).mean(axis=1)
-        rewards = np.concatenate([rewards_start, rewards])
-        timesteps = np.concatenate([timesteps_start, timesteps])
+        # rewards_start = rewards[:len(rewards) % 5]
+        # timesteps_start = timesteps[:len(rewards) % 5]
+        # rewards = rewards[len(rewards) % 5:].reshape(-1, 5).mean(axis=1)
+        # timesteps = timesteps[len(timesteps) % 5:].reshape(-1, 5).mean(axis=1)
+        # rewards = np.concatenate([rewards_start, rewards])
+        # timesteps = np.concatenate([timesteps_start, timesteps])
         for i in range(len(rewards)):
             wandb_run.log({
                 "reward": rewards[i], 
@@ -70,6 +70,43 @@ general_params = {
     "use_target_networks": False,
     "normalize_advantages": False,
 }
+ppo_naive = general_params.copy()
+ppo_naive.update({
+    "use_policy_network": True,
+    "policy_regularizer": ("ppo"),
+    "off_policy": False,
+    "use_Q_critic": False,
+    "exploration_method": "sampling",
+})
+a2c_naive = general_params.copy()
+a2c_naive.update({
+    "use_policy_network": True,
+    "policy_regularizer": ("a2c",),
+    "off_policy": False,
+    "use_Q_critic": False,
+    "exploration_method": "sampling",
+})
+sac_naive = general_params.copy()
+sac_naive.update({
+    "use_policy_network": True,
+    "policy_regularizer": ("sac",),
+    "off_policy": True,
+    "use_Q_critic": True,
+    "q_target_objective": "ESARSA",
+    "exploration_method": "sampling",
+    "soft_targets": True,
+})
+dqn_naive = general_params.copy()
+dqn_naive.update({
+    "use_policy_network": False,
+    "off_policy": True,
+    "use_Q_critic": True,
+    "q_target_objective": "QLEARNING",
+    "exploration_method": "egreedy",
+    "soft_targets": False,
+})
+
+
 ppo_default = general_params.copy()
 ppo_default.update({
     "use_policy_network": True,
@@ -77,6 +114,10 @@ ppo_default.update({
     "off_policy": False,
     "use_Q_critic": False,
     "exploration_method": "sampling",
+    "ent_coef": 0.01,
+    "num_minibatches": 8,
+    "update_epochs": 4,
+    "normalize_advantages": True,
 })
 a2c_default = general_params.copy()
 a2c_default.update({
@@ -85,6 +126,7 @@ a2c_default.update({
     "off_policy": False,
     "use_Q_critic": False,
     "exploration_method": "sampling",
+    "normalize_advantages": True,
 })
 sac_default = general_params.copy()
 sac_default.update({
@@ -95,6 +137,9 @@ sac_default.update({
     "q_target_objective": "ESARSA",
     "exploration_method": "sampling",
     "soft_targets": True,
+    "learn_alpha": True,
+    "dual_critics": True,
+    "use_target_networks": True,
 })
 dqn_default = general_params.copy()
 dqn_default.update({
@@ -106,41 +151,144 @@ dqn_default.update({
     "soft_targets": False,
 })
 
-env_ids = ["CartPole-v1", "Acrobot-v1", "Catch-bsuite", "MountainCar-v0"]
-seed_num = 10
-num_timesteps = 1_000_000
-for env_id in env_ids:
-    env, env_params = gymnax.make(env_id)
-    env = GymnaxWrapper(env)
-    env = LogWrapper(env)
-    key = jax.random.PRNGKey(0)
-    seed_keys = jax.random.split(key, seed_num)
+ppo_engineered = general_params.copy()
+ppo_engineered.update({
+    "use_policy_network": True,
+    "policy_regularizer": ("ppo"),
+    "off_policy": False,
+    "use_Q_critic": False,
+    "exploration_method": "sampling",
+    "ent_coef": 0.01,
+    "kl_coef": 0.1,
+    "num_minibatches": 8,
+    "update_epochs": 4,
+    "normalize_advantages": True,
+    "dual_critics": False,
+})
+a2c_engineered = general_params.copy()
+a2c_engineered.update({
+    "use_policy_network": True,
+    "policy_regularizer": ("a2c",),
+    "off_policy": False,
+    "use_Q_critic": False,
+    "exploration_method": "sampling",
+    "normalize_advantages": True,
+    "ent_coef": 0.01,
+    "kl_coef": 0.1,
+    "dual_critics": False,
+    "num_minibatches": 8,
+    "update_epochs": 4,
+})
+sac_engineered = general_params.copy()
+sac_engineered.update({
+    "use_policy_network": True,
+    "policy_regularizer": ("sac",),
+    "off_policy": True,
+    "use_Q_critic": True,
+    "q_target_objective": "ESARSA",
+    "exploration_method": "sampling",
+    "soft_targets": True,
+    "learn_alpha": True,
+    "dual_critics": True,
+    "use_target_networks": True,
 
-    # for algo_name in ["A2C_gpi", "PPO_gpi"]:
-    #     project_name = "sb3_sanity_check"
-    #     if algo_name == "A2C_gpi":
-    #         if env_id == "Catch-bsuite": continue
-    #         params = DEFAULT_A2C_PARAMS
-    #     elif algo_name == "PPO_gpi":
-    #         params = DEFAULT_PPO_PARAMS
-    #     params = params.replace(
-    #         total_timesteps=num_timesteps,
-    #         debug=False,
-    #     )
-    #     agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
-    #     if env_id == "Catch-bsuite": 
-    #         env_id = "bsuite/catch-v0"
-    #     config = params.__dict__
-    #     config.update({"env_id": env_id, "algo": algo_name})
-    #     log_multiple_runs(metrics, config)
+    "kl_coef": 0.1,
+    "dual_critics": False,
+    "num_minibatches": 8,
+    "update_epochs": 4,
+})
+dqn_engineered = general_params.copy()
+dqn_engineered.update({
+    "use_policy_network": False,
+    "off_policy": True,
+    "use_Q_critic": True,
+    "q_target_objective": "QLEARNING",
+    "exploration_method": "egreedy",
 
-    for algo_name, params in zip(["A2C_gpi", "PPO_gpi", "SAC_gpi", "DQN_gpi"], [a2c_default, ppo_default, sac_default, dqn_default]):
-        algo_name += "_naive"
-        project_name = "default-vs-engineered"
-        params = GpiHyperparams(params)
-        agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
-        if env_id == "Catch-bsuite": 
-            env_id = "bsuite/catch-v0"
-        config = params.__dict__
-        config.update({"env_id": env_id, "algo": algo_name})
-        log_multiple_runs(metrics, config)
+    "soft_targets": True,
+    "learn_alpha": True,
+    "dual_critics": True,
+    "use_target_networks": True,
+
+    "kl_coef": 0.1,
+    "dual_critics": False,
+    "num_minibatches": 8,
+    "update_epochs": 4,
+})
+
+if __name__ == "__main__":
+
+    env_ids = ["CartPole-v1", "Acrobot-v1", "Catch-bsuite", "MountainCar-v0"]
+    seed_num = 10
+    num_timesteps = 1_000_000
+    for env_id in env_ids:
+        env, env_params = gymnax.make(env_id)
+        env = GymnaxWrapper(env)
+        env = LogWrapper(env)
+        key = jax.random.PRNGKey(0)
+        seed_keys = jax.random.split(key, seed_num)
+
+        # for algo_name in ["A2C_gpi", "PPO_gpi"]:
+        #     project_name = "sb3_sanity_check"
+        #     if algo_name == "A2C_gpi":
+        #         if env_id == "Catch-bsuite": continue
+        #         params = DEFAULT_A2C_PARAMS
+        #     elif algo_name == "PPO_gpi":
+        #         params = DEFAULT_PPO_PARAMS
+        #     params = params.replace(
+        #         total_timesteps=num_timesteps,
+        #         debug=False,
+        #     )
+        #     agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
+        #     if env_id == "Catch-bsuite": 
+        #         env_id = "bsuite/catch-v0"
+        #     config = params.__dict__
+        #     config.update({"env_id": env_id, "algo": algo_name})
+        #     log_multiple_runs(metrics, config)
+
+        for algo_name, params in zip(["A2C_gpi", "PPO_gpi", "SAC_gpi", "DQN_gpi"], [a2c_naive, ppo_naive, sac_naive, dqn_naive]):
+            algo_name += "_naive"
+            project_name = "default-vs-engineered"
+            params = GpiHyperparams(params)
+            agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
+            if env_id == "Catch-bsuite": 
+                env_id = "bsuite/catch-v0"
+            config = params.__dict__
+            config.update({"env_id": env_id, "algo": algo_name})
+            log_multiple_runs(metrics, config)
+
+    for env_id in env_ids:
+        env, env_params = gymnax.make(env_id)
+        env = GymnaxWrapper(env)
+        env = LogWrapper(env)
+        key = jax.random.PRNGKey(0)
+        seed_keys = jax.random.split(key, seed_num)
+
+        for algo_name, params in zip(["A2C_gpi", "PPO_gpi", "SAC_gpi", "DQN_gpi"], [a2c_default, ppo_default, sac_default, dqn_default]):
+            algo_name += "_default"
+            project_name = "default-vs-engineered"
+            params = GpiHyperparams(params)
+            agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
+            if env_id == "Catch-bsuite": 
+                env_id = "bsuite/catch-v0"
+            config = params.__dict__
+            config.update({"env_id": env_id, "algo": algo_name})
+            log_multiple_runs(metrics, config)
+
+    for env_id in env_ids:
+        env, env_params = gymnax.make(env_id)
+        env = GymnaxWrapper(env)
+        env = LogWrapper(env)
+        key = jax.random.PRNGKey(0)
+        seed_keys = jax.random.split(key, seed_num)
+
+        for algo_name, params in zip(["A2C_gpi", "PPO_gpi", "SAC_gpi", "DQN_gpi"], [a2c_engineered, ppo_engineered, sac_engineered, dqn_engineered]):
+            algo_name += "_engineered"
+            project_name = "default-vs-engineered"
+            params = GpiHyperparams(params)
+            agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
+            if env_id == "Catch-bsuite": 
+                env_id = "bsuite/catch-v0"
+            config = params.__dict__
+            config.update({"env_id": env_id, "algo": algo_name})
+            log_multiple_runs(metrics, config)

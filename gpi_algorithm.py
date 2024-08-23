@@ -461,7 +461,10 @@ if __name__ == "__main__":
     env = LogWrapper(env)
     key = jax.random.PRNGKey(0)
     from default_params import DEFAULT_PPO_PARAMS, DEFAULT_A2C_PARAMS
-    agent, metrics = GpiAlgorithm.train(key, env, DEFAULT_PPO_PARAMS)
+    from train import sac_naive, sac_default, sac_engineered
+    params = GpiHyperparams(sac_default)
+    params = params.replace(debug=True)
+    agent, metrics = GpiAlgorithm.train(key, env, params)
     # agent, metrics = GpiAlgorithm.train(key, env)
     avg = metrics["returned_episode_returns"][metrics["returned_episode"]].mean()
     print(avg)
