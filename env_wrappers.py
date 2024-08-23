@@ -38,7 +38,7 @@ class GymnaxWrapper(JaxEnvWrapper):
 
     def reset(self, key, params=None):
         obs, env_state = self._env.reset(key, params)
-        # obs = obs.flatten()
+        obs = obs.flatten()
         return obs, env_state # no changes ...
     
     def step(self, key, state, action, params=None):   
@@ -51,7 +51,7 @@ class GymnaxWrapper(JaxEnvWrapper):
         step_key, reset_key = jax.random.split(key)
         obs_step, env_state_step, reward, done, info = self._env.step_env(step_key, state, action, params)
         obs_reset, env_state_reset = self.reset(reset_key, params)
-        # obs_step = obs_step.flatten()
+        obs_step = obs_step.flatten()
 
         terminated, truncated = done, False
         if hasattr(env_state_step, "time") and hasattr(params, "max_steps_in_episode"): # Try to retrieve truncated information
