@@ -19,6 +19,8 @@ def log_multiple_runs(metrics, config):
     for run in range(num_runs):
         rewards = metrics["returned_episode_returns"][run][metrics["returned_episode"][run]]
         timesteps = metrics["timestep"][run][metrics["returned_episode"][run]] * num_envs
+        # round each element of timestep to the nearest multiple of 50
+        timesteps = np.round(timesteps / 50) * 50
         wandb_run = wandb.init(
             entity="FelixAndKoen",
             project=project_name, 
@@ -248,7 +250,7 @@ if __name__ == "__main__":
 
         for algo_name, params in zip(["A2C_gpi", "PPO_gpi", "SAC_gpi", "DQN_gpi"], [a2c_naive, ppo_naive, sac_naive, dqn_naive]):
             algo_name += "_naive"
-            project_name = "default-vs-engineered"
+            project_name = "default-vs-engineered3"
             params = GpiHyperparams(params)
             agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
             if env_id == "Catch-bsuite": 
@@ -266,7 +268,7 @@ if __name__ == "__main__":
 
         for algo_name, params in zip(["A2C_gpi", "PPO_gpi", "SAC_gpi", "DQN_gpi"], [a2c_default, ppo_default, sac_default, dqn_default]):
             algo_name += "_default"
-            project_name = "default-vs-engineered"
+            project_name = "default-vs-engineered3"
             params = GpiHyperparams(params)
             agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
             if env_id == "Catch-bsuite": 
@@ -284,7 +286,7 @@ if __name__ == "__main__":
 
         for algo_name, params in zip(["A2C_gpi", "PPO_gpi", "SAC_gpi", "DQN_gpi"], [a2c_engineered, ppo_engineered, sac_engineered, dqn_engineered]):
             algo_name += "_engineered"
-            project_name = "default-vs-engineered"
+            project_name = "default-vs-engineered3"
             params = GpiHyperparams(params)
             agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
             if env_id == "Catch-bsuite": 
