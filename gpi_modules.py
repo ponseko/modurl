@@ -1,6 +1,8 @@
 import jax 
 import jax.numpy as jnp
+import numpy as np
 import equinox as eqx
+import optax 
 from util import TrainBatch
 
 def calculate_gae_returns(trajectory_batch, last_value, hyperparams):
@@ -27,11 +29,12 @@ def calculate_gae_returns(trajectory_batch, last_value, hyperparams):
 
 @eqx.filter_grad
 def q_loss(critics, hyperparams, train_data: TrainBatch):
+    #NOTE: tree map
     total_q_loss = 0
 
     for critic in critics:
         q_out = jax.vmap(critic)(train_data.observation)
-        idx1 = jnp.arange(q_out.shape[0])
+        idx1 = np.arange(q_out.shape[0])
         selected_q_values = q_out[idx1, train_data.action]
         q_loss = jnp.mean((selected_q_values - train_data.targets) ** 2)
         total_q_loss += q_loss
@@ -46,7 +49,7 @@ def value_loss(critics, hyperparams, train_data: TrainBatch):
     total_value_loss = 0
     for critic in critics:
         value = jax.vmap(critic)(train_data.observation)
-        value_loss = jnp.square(value - train_data.returns).mean()
+        value_loss = jnp.square(value - train_data.returns)
 
         if hyperparams.clip_coef_vf > 0:
             assert train_data.value is not None
@@ -58,20 +61,20 @@ def value_loss(critics, hyperparams, train_data: TrainBatch):
             value_clipped_losses = jnp.square(value_clipped - train_data.returns)
 
             # TODO: Should this be an optional component? (e.g. pessimistic updates)
-            value_loss = jnp.maximum(value_loss, value_clipped_losses).mean()
+            value_loss = jnp.maximum(value_loss, value_clipped_losses)
 
-        total_value_loss += value_loss
+        total_value_loss += value_loss.mean()
 
     return hyperparams.vf_coef * total_value_loss
 
 @eqx.filter_grad
-def policy_loss(params, hyperparams, train_data: TrainBatch, critic_output, old_policy, alpha):
+def policy_loss(params, hyperparams, train_data: TrainBatch, critic_output, old_policy, alpha, get_action_dist):
     if hyperparams.normalize_advantages:
         advantages = (train_data.advantages - train_data.advantages.mean()) / (train_data.advantages.std() + 1e-8)
     else: 
         advantages = train_data.advantages
 
-    action_dist = jax.vmap(params)(train_data.observation)
+    action_dist = get_action_dist(train_data.observation, actor=params)
 
     actor_loss = 0
 
@@ -107,22 +110,28 @@ def policy_loss(params, hyperparams, train_data: TrainBatch, critic_output, old_
 
     if "add_entropy" in hyperparams.policy_regularizer:
         entropy = action_dist.entropy().mean()
-        actor_loss -= alpha() * entropy
+        actor_loss -= hyperparams.ent_coef * entropy
 
     return actor_loss
 
 @eqx.filter_grad
-def alpha_loss(params, hyperparams, action_dist):
-    # def target_entropy_scale(count):
-    #     frac = (
-    #         1.0
-    #         - count / (hyperparams.total_timesteps // hyperparams.update_every)
-    #     )
-    #     return (hyperparams.target_entropy_scale_start * frac) + 0.01
+def alpha_loss(params, hyperparams, action_dist, step):
+    num_update_steps = int(
+        hyperparams.total_timesteps 
+        * hyperparams.num_minibatches * hyperparams.update_epochs 
+        // (hyperparams.num_envs * hyperparams.num_steps)
+    )
+
+    target_entropy_scale = optax.linear_schedule(
+        init_value=hyperparams.entropy_target,
+        end_value=0.01,
+        transition_steps=num_update_steps
+    )
     
     action_probs = action_dist.probs
     action_probs_log = jnp.log(action_probs + 1e-8)
-    target_entropy = -(hyperparams.alpha_init) * jnp.log(1 / params.num_actions)
+    # target_entropy = -(hyperparams.entropy_target) * jnp.log(1 / params.num_actions)
+    target_entropy = target_entropy_scale(step) * jnp.log(1 / params.num_actions)
     return -jnp.mean(
         jnp.log(params()) 
         * ((action_probs * action_probs_log) 

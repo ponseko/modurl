@@ -3,6 +3,7 @@ import chex
 from gymnax.environments import spaces
 import numpy as np
 import equinox as eqx
+import jax
 
 @chex.dataclass(frozen=True)
 class EnvState:
@@ -37,20 +38,68 @@ class GymnaxWrapper(JaxEnvWrapper):
 
     def reset(self, key, params=None):
         obs, env_state = self._env.reset(key, params)
+        # obs = obs.flatten()
         return obs, env_state # no changes ...
     
-    def step(self, key, state, action, params=None):
-        obs, env_state, reward, done, info = self._env.step(
-            key, state, action, params
+    def step(self, key, state, action, params=None):   
+        """ 
+            Adds truncated information to the default gymnax step function.
+            This function auto resets the environment when done.
+        """    
+        if params is None:
+            params = self._env.default_params
+        step_key, reset_key = jax.random.split(key)
+        obs_step, env_state_step, reward, done, info = self._env.step_env(step_key, state, action, params)
+        obs_reset, env_state_reset = self.reset(reset_key, params)
+        # obs_step = obs_step.flatten()
+
+        terminated, truncated = done, False
+        if hasattr(env_state_step, "time") and hasattr(params, "max_steps_in_episode"): # Try to retrieve truncated information
+            # We set the time of the same state to 0, and check if the termination still holds
+            # If it does not, the episode was done due to truncation (time limit).
+            state_t0 = eqx.tree_at(lambda x: x.time, env_state_step, 0)
+            terminated = self._env.is_terminal(state_t0, params)
+            truncated = done & ~terminated
+
+        # autoreset:
+        env_state = jax.tree_map(
+            lambda x, y: jax.lax.select(done, x, y), env_state_reset, env_state_step
         )
+        obs = jax.lax.select(done, obs_reset, obs_step)
+
+        # NOTE: Not a huge fan of this approach, but it is what gymnasium uses.
+        info.update({"terminal_observation": obs_step}) # use this as "next_observation" in the buffer
+
         timestep = TimeStep(
             observation=obs,
             reward=reward,
-            terminated=done,
-            truncated=False, # gymnax API does not distinguish between truncated and terminated
+            terminated=terminated,
+            truncated=truncated,
             info=info
         )
         return timestep, env_state
+
+
+    @property
+    def observation_space(self):
+        params = self._env.default_params
+        obs_space = self._env.observation_space(params)
+        # Flatten it
+        assert isinstance(
+            obs_space, spaces.Box
+        ), "Only Box observation spaces are supported"
+        return spaces.Box(
+            low=obs_space.low,
+            high=obs_space.high,
+            shape=(np.prod(obs_space.shape),),
+            dtype=obs_space.dtype,
+        )
+
+    
+    @property
+    def action_space(self):
+        params = self._env.default_params
+        return self._env.action_space(params)
     
 class NavixWrapper(JaxEnvWrapper):
     """ 
@@ -65,6 +114,7 @@ class NavixWrapper(JaxEnvWrapper):
         return flat_obs, timestep
 
     def step(self, key, state, action):
+        # NOTE TODO: this wrapper probably causes wrong observations to be passed to the agent on truncation. see fix gymnaxwrapper.
         navix_timestep = self._env.step(state, action)
         flat_obs = navix_timestep.observation.flatten()
         timestep = (flat_obs, navix_timestep.reward, navix_timestep.is_termination(), navix_timestep.is_truncation(), navix_timestep.info)

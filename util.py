@@ -26,7 +26,7 @@ def log_callback(info):
     num_envs = info["num_envs"]
     return_values = info["returned_episode_returns"][info["returned_episode"]]
     timesteps = info["timestep"][info["returned_episode"]] * num_envs
-    for t in range(len(timesteps)): 
+    for t in range(len(timesteps))[-3:]: 
         print(f"global step={timesteps[t]}, episodic return={return_values[t]}")
 
 def wandb_callback(info):
@@ -79,30 +79,29 @@ def set_up_replay_buffer(hyperparams, env):
     else:
         max_length = hyperparams.buffer_max_size
         sample_batch_size = hyperparams.buffer_sample_size
-    buffer = flashbax.make_flat_buffer(
-        max_length=max_length,
-        min_length=hyperparams.num_steps - 1,
-        sample_batch_size=sample_batch_size,
+    # buffer = flashbax.make_flat_buffer(
+    #     max_length=int(max_length),
+    #     min_length=int(sample_batch_size - 1),
+    #     sample_batch_size=int(sample_batch_size),
+    #     add_sequences=True,
+    #     add_batch_size=int(hyperparams.num_envs),
+    # )
+    buffer = flashbax.make_item_buffer(
+        max_length=int(max_length),
+        min_length=int(sample_batch_size - 1),
+        sample_batch_size=int(sample_batch_size),
         add_sequences=True,
-        add_batch_size=hyperparams.num_envs,
+        add_batches=int(hyperparams.num_envs),
     )
     buffer_state = buffer.init(dummy_transition)
 
     return buffer, buffer_state
 
 def set_up_optimizer(hyperparams, actor, critic, alpha):
-    num_update_steps = int(
-        hyperparams.total_timesteps 
-        * hyperparams.num_minibatches * hyperparams.update_epochs 
-        // (hyperparams.num_envs * hyperparams.num_steps)
-    )
     optimizer = optax.chain(
         optax.clip_by_global_norm(hyperparams.max_grad_norm),
         optax.adam(
-            learning_rate=optax.polynomial_schedule(
-                init_value=hyperparams.learning_rate, end_value=0., power=1, 
-                transition_steps=num_update_steps
-            ) if hyperparams.anneal_lr else hyperparams.learning_rate,
+            learning_rate=hyperparams.learning_rate,
             eps=1e-5
         ),
     )
