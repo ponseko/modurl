@@ -83,6 +83,7 @@ class GpiHyperparams:
     epsilon_init: float = 0.3
     use_policy_network: bool = True
     orthogonal_init: bool = True
+    soft_targets: bool = True # e.g. SAC
 
     @property
     def num_rollouts(self):
@@ -257,6 +258,9 @@ class GpiAlgorithm(eqx.Module):
 
             # # SB3 hack: (would like something else, but lets leave it for now)
             next_value = get_critic_output(train_state.critic, obsv)
+            if hyperparams.use_Q_critic:
+                action_probs = get_action_dist(obsv, train_state).probs
+                next_value = (next_value * action_probs).sum(axis=-1)
             next_value = hyperparams.gamma * next_value
             reward = reward + (truncated * next_value)
             
@@ -287,7 +291,7 @@ class GpiAlgorithm(eqx.Module):
                 # flat_targets = (next_action_probs * (q_targets - train_state.alpha() * next_action_probs_log)).sum(axis=-1)
 
 
-                if True: # soft targets TODO option in config, or just leave as alpha=0
+                if hyperparams.soft_targets: # soft targets TODO option in config, or just leave as alpha=0
                     q_targets = q_targets - train_state.alpha() * next_action_probs_log
                 if hyperparams.q_target_objective == "QLEARNING":
                     flat_targets = jnp.max(q_targets, axis=-1)
@@ -328,10 +332,6 @@ class GpiAlgorithm(eqx.Module):
             def create_minibatches(rng, _):
                 rng, shuffle_key, sample_key = jax.random.split(rng, 3)
                 train_batch = agent.buffer.sample(train_state.buffer_state, sample_key).experience#.first
-                # indices = jax.random.permutation(shuffle_key, train_batch.reward.shape[0])
-                # train_batch = jax.tree_util.tree_map(
-                #     lambda x: jnp.take(x, indices, axis=0), train_batch
-                # )
                 minibatches = jax.tree.map( # If minibatches=False, num_minibatches=1
                     lambda x: x.reshape((hyperparams.num_minibatches, -1) + x.shape[1:]), train_batch
                 )

@@ -93,6 +93,7 @@ sac_default.update({
     "use_Q_critic": True,
     "q_target_objective": "ESARSA",
     "exploration_method": "sampling",
+    "soft_targets": True,
 })
 dqn_default = general_params.copy()
 dqn_default.update({
@@ -101,6 +102,7 @@ dqn_default.update({
     "use_Q_critic": True,
     "q_target_objective": "QLEARNING",
     "exploration_method": "egreedy",
+    "soft_targets": False,
 })
 
 env_ids = ["CartPole-v1", "Acrobot-v1", "Catch-bsuite", "MountainCar-v0"]
