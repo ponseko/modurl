@@ -49,7 +49,8 @@ general_params = {
     "debug": False,
     "alpha_init": -1.6,
     "entropy_target": 0.5,
-    "kl_coef": 0.2,
+    "ent_coef": 0.0,
+    "kl_coef": 0.0,
     "max_grad_norm": 0.5,
     "tau": 0.05,
     "gae_lambda": 0.95,
@@ -72,7 +73,7 @@ general_params = {
 ppo_default = general_params.copy()
 ppo_default.update({
     "use_policy_network": True,
-    "policy_regularizer": ("ppo", "add_entropy"),
+    "policy_regularizer": ("ppo"),
     "off_policy": False,
     "use_Q_critic": False,
     "exploration_method": "sampling",
@@ -140,4 +141,6 @@ for env_id in env_ids:
         agents, metrics = eqx.filter_vmap(GpiAlgorithm.train, in_axes=(0, None, None))(seed_keys, env, params)
         if env_id == "Catch-bsuite": 
             env_id = "bsuite/catch-v0"
-        log_multiple_runs(metrics, params.__dict__.update({"env_id": env_id, "algo": algo_name}))
+        config = params.__dict__
+        config.update({"env_id": env_id, "algo": algo_name})
+        log_multiple_runs(metrics, config)

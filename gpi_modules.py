@@ -103,14 +103,16 @@ def policy_loss(params, hyperparams, train_data: TrainBatch, critic_output, old_
         )
         actor_loss += sac_loss
 
-    if "kl" in hyperparams.policy_regularizer:
-        old_action_dist = jax.vmap(old_policy)(train_data.observation)
-        kl_div = jnp.mean(old_action_dist.kl_divergence(action_dist))
-        actor_loss += hyperparams.kl_coef * kl_div
+    # Additive policy losses:
+    # [kl, add_entropy] # TODO: 
 
-    if "add_entropy" in hyperparams.policy_regularizer:
-        entropy = action_dist.entropy().mean()
-        actor_loss -= hyperparams.ent_coef * entropy
+    # TODO other kl directions
+    old_action_dist = jax.vmap(old_policy)(train_data.observation)
+    kl_div = jnp.mean(old_action_dist.kl_divergence(action_dist))
+    actor_loss += hyperparams.kl_coef * kl_div
+
+    entropy = action_dist.entropy().mean()
+    actor_loss -= hyperparams.ent_coef * entropy
 
     return actor_loss
 

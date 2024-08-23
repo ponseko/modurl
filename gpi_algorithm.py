@@ -47,11 +47,11 @@ class GpiHyperparams:
     gamma: float = 0.99
     num_envs: int = 4
     debug: bool = True # log values during training
-    ent_coef: float = 0.01
     alpha_init: float = 0.0 # 
     entropy_target: float = 0.5
     learn_alpha: bool = True 
-    kl_coef: float = 0.2
+    kl_coef: float = 0.0
+    ent_coef: float = 0.00
     max_grad_norm: float = 0.5
     tau: float = 0.05 # target network update rate
 
@@ -77,7 +77,7 @@ class GpiHyperparams:
     use_target_networks: bool = True
     off_policy: bool = True # else -> sample_batch_size = num_steps (* num_envs)
     normalize_advantages: bool = True
-    policy_regularizer: Tuple[str] = ("sac",) # "ppo", "a2c", "sac", "kl", "add_entropy"
+    policy_regularizer: Tuple[str] = ("sac",) # "ppo", "a2c", "sac"
     q_target_objective: str = "QLEARNING" # "QLEARNING", "SARSA", "ESARSA"
     exploration_method: str = "sampling" # "sampling", "egreedy"
     epsilon_init: float = 0.3
